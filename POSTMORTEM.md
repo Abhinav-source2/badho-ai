@@ -1,220 +1,97 @@
-# 🧠 POSTMORTEM.md — Badho AI (Agentic Career Coach)
+# 🧠 POSTMORTEM.md — Badho AI Agentic Career Coach
 
-This document captures the **engineering decisions, tradeoffs, failures, and lessons learned** while building a production-style agentic AI system.
-
-This is not a feature list — it is a reflection of **what actually mattered technically**.
+> *One engineer. Three days. Direct SDK calls. $2.70.*
 
 ---
 
-# 🎯 Project Goal
+## What I Cut — and Why
 
-Build a **reliable, tool-using AI system** — not just a chatbot.
+**Resume PDF builder tool** (~4 hrs estimated) — cut to protect time for the eval suite.
+A downloadable PDF is a visible feature. A validated agentic loop is a system.
+I chose system depth over surface-area. Wrong call for a demo, right call for production.
 
-Constraints:
-- No LangChain / LlamaIndex
-- Must support RAG + tools + streaming
-- Must behave deterministically (eval-driven)
+**Qdrant Cloud as vector store** — stayed with local ChromaDB throughout.
+External vector DB adds network latency per query and cold-start complexity on
+Railway's free tier. ChromaDB gave faster iteration and lower p95 TTFT.
+Would switch to Qdrant or pgvector the moment the system needs horizontal scaling.
+
+**Offline retrieval eval (Recall@3)** — no golden Q&A dataset was built.
+RAG quality is validated only indirectly through end-to-end eval cases.
+This is the biggest blind spot in the current system. A 50-question golden
+dataset with isolated retrieval scoring would have caught chunking issues
+independently of generation quality.
 
 ---
 
-# ❌ What I Deliberately Cut (and Why)
+## What I Would Never Ship As-Is
 
-## 1. Resume PDF Generator Tool
-**Estimated effort:** 3–4 hours  
-**Why cut:**
+**In-memory session state.** On any pod restart or redeployment, all active
+conversation context is permanently and silently lost. A user mid-conversation
+gets a completely amnesiac assistant with no warning or graceful degradation.
+Production fix: Redis with 24-hour TTL. One day of work. Consciously deferred
+to spend time on the agentic loop and eval suite instead.
 
-- Would require:
-  - HTML templating
-  - WeasyPrint setup
-  - binary streaming
-- Adds **surface-level feature**, not system depth
+**In-memory telemetry.** Metrics reset on restart — meaning the `/metrics`
+endpoint shows only data from the current process lifetime. Acceptable for a
+demo where you control the server. Unacceptable in production where restarts
+happen during deployments. Fix: append-only log file or SQLite — two hours of work.
 
-**Decision:**
-```text
-Prioritized agent reliability + eval system over feature count
-2. Qdrant / External Vector DB
+---
 
-Used instead: Local ChromaDB
+## What Was Actually Hard
 
-Why:
+**The agentic tool-use loop.** The concept is simple — detect `tool_use`,
+execute, append, loop. The raw SDK reality is not. The assistant message must
+include the full content blocks array including `tool_use` blocks, not just
+the text. Tool results must reference the exact `tool_use_id`. Getting this
+wrong produces silent failures — the model just stops using tools. LangChain
+hides all of this. Building without it forces you to understand every byte
+of the message structure. That understanding is the point.
 
-External DB = network latency per query
-Cold start issues on free-tier deployments
-Added operational complexity
+**Tool reliability.** The model inconsistently triggered tools when user
+phrasing didn't match tool descriptions closely. Fixed via explicit system
+prompt instructions per tool category and heuristic gating for the roadmap
+tool. The lesson: optional tools are unreliable tools. Critical tools need
+explicit triggering logic in code, not just prompts.
 
-Tradeoff:
+**Multi-turn context.** Even with full message history passed, the model
+ignored prior context in longer conversations. Fix: inject a structured
+context summary into the final user message before inference. Context
+reinforcement via code, not trust in the model's attention.
 
-Scalability sacrificed → faster iteration + lower latency gained
+---
 
-Would switch to:
+## What I Would Do Differently
 
-Qdrant / pgvector in production
-3. Offline Retrieval Evaluation (Recall@K)
+**Start with the eval suite.** I built features first, then wrote tests.
+The right order is: define what "working" means, write the evals, then build
+until they pass. Eval-first forces precision about requirements before a line
+of application code is written.
 
-Skipped:
+**Design tool contracts first.** Tools were added as the system grew.
+They should have been defined as first-class interfaces on Day 1 —
+input schemas, output schemas, failure modes — before any implementation.
+This would have made the agentic loop cleaner and the tests more targeted.
 
-No golden dataset created
-No independent retrieval scoring
+---
 
-Impact:
+## Week 2 — What I Would Build
 
-RAG quality is only validated indirectly via end-to-end tests
+| Priority | Feature | Why |
+|---|---|---|
+| 1 | Redis session store | Eliminate the one thing I'd never ship |
+| 2 | Offline Recall@3 eval | Close the biggest quality blind spot |
+| 3 | Semantic caching | ~30% cost reduction on repeated queries |
+| 4 | Resume PDF builder tool | The feature I cut that users would actually want |
+| 5 | Async parallel tool calls | `asyncio.gather()` — latency improvement when multiple tools fire |
 
-👉 This is the biggest blind spot in current system.
+---
 
-⚠️ What I Would NEVER Ship As-Is
-1. In-Memory Session State
+## One Line
 
-Current behavior:
+> I built a deterministic agentic system by moving control from prompts into
+> code — validated by a custom eval framework, shipped in 3 days for $2.70.
 
-Restart server → conversation lost
+---
 
-User impact:
-
-Assistant becomes "amnesiac" mid-conversation
-
-Production fix:
-
-Redis with TTL (24 hours)
-Session-based persistence
-2. Static Salary Data
-Hardcoded salary ranges
-No real-time updates
-
-Risk:
-
-Data becomes outdated quickly
-
-Production fix:
-
-API integration OR scheduled refresh pipeline
-3. No Authentication Layer
-session_id is arbitrary
-no user isolation
-
-Risk:
-
-Any user can access any session if ID is known
-🔥 What Was Technically Hard (Real Challenges)
-1. Agentic Tool Loop (Core Difficulty)
-
-This looks simple conceptually:
-
-User → LLM → Tool → LLM → Answer
-
-Reality:
-
-Message format must match Anthropic spec EXACTLY
-Tool outputs must be injected correctly
-Model may ignore tools even when needed
-Problem:
-Model inconsistently triggered tools
-Solution:
-Added heuristic tool gating
-Added forced tool execution for roadmap queries
-2. Tool Choice API Bug (Subtle but Critical)
-Problem:
-tool_choice = None
-
-→ Anthropic API throws 400 error
-
-Fix:
-Only include tool_choice when required
-Lesson:
-APIs prefer "missing" over "null"
-3. Multi-Turn Context Failure (Major Issue)
-Problem:
-
-Even with history passed, model ignored prior context
-
-Root Cause:
-LLMs don't reliably use history unless reinforced
-Fix:
-Inject previous user context into final message
-Context → explicitly embedded → model forced to use it
-4. Non-Deterministic Outputs
-Problem:
-
-Same query → different behavior
-→ eval failures
-
-Solution:
-Built evaluation suite (12 cases)
-Iteratively fixed:
-tool triggering
-citations
-adversarial handling
-📊 Evaluation System (Biggest Strength)
-Coverage:
-Category	Purpose
-Factual	correctness + citations
-Reasoning	decision quality
-Multi-turn	memory consistency
-Adversarial	safety
-Tool-use	correct execution
-Final Result:
-12 / 12 PASS ✅
-Why This Matters:
-Most AI projects are demos  
-This is a validated system
-🧠 Key Engineering Insights
-1. Prompt ≠ Control
-
-Early mistake:
-
-Tried solving everything via prompt
-
-Reality:
-
-Prompt = suggestion  
-Code = guarantee
-2. Tool Use Must Be Enforced (Sometimes)
-Optional tools → unreliable
-Critical tools → must be forced
-3. Determinism is Hard in AI Systems
-Small changes break behavior
-Eval suite is essential
-4. Agent Systems Are Stateful Systems
-Memory is not optional
-Context handling is core logic
-🔄 What I Would Do Differently
-1. Start with Evals First
-
-Instead of:
-
-Build → then test ❌
-
-Better:
-
-Define success → then build ✅
-2. Design Tool System Earlier
-Tool contracts should be first-class
-Not added later
-3. Separate Reasoning vs Execution Layers
-
-Currently mixed:
-
-LLM reasoning
-tool orchestration
-
-Would split:
-
-planner → executor architecture
-🚀 What I Would Build in Week 2
-Redis-backed session memory
-Offline retrieval eval (50+ golden Q&A)
-Semantic caching (reduce cost ~30%)
-Async tool streaming
-User identity layer (auth + session binding)
-🎯 Final Reflection
-
-This project evolved from:
-
-Chatbot → Agent → System
-
-The biggest shift was:
-
-Thinking in terms of SYSTEM BEHAVIOR, not responses
-🧠 If I Had to Summarize in One Line
-
-I built a deterministic agentic AI system by moving control from prompts to code, validated through a custom evaluation framework.
+*Abhinav Jajoo — Nudgit / Badho AI Take-Home*

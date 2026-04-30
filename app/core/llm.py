@@ -8,6 +8,7 @@ import anthropic
 from dotenv import load_dotenv
 
 from app.core.tools import TOOL_SCHEMAS, execute_tool, TOOL_MAP
+from app.core.metrics import record_metrics
 
 
 def normalize_messages(messages):
@@ -289,12 +290,20 @@ async def run_agentic_turn(
                     input_tokens += final.usage.input_tokens
                     output_tokens += final.usage.output_tokens
 
+            cost = (
+                input_tokens * 0.80 / 1_000_000 +
+                output_tokens * 4.00 / 1_000_000
+            )
+            record_metrics(ttft_ms, cost)
+
+
             yield _sse("__meta__", {
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "tool_ms": round(total_tool_ms, 2),
                 "ttft_ms": round(ttft_ms, 2),
                 "model_used": active_model,
+                "cost_usd": round(cost, 6),
             })
 
             yield _sse("done", {})

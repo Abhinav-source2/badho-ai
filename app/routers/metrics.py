@@ -1,8 +1,8 @@
 from fastapi import APIRouter
-from app.core.telemetry import get_aggregate_stats
+from app.core.metrics import get_metrics
 
 router = APIRouter()
 
 @router.get("/metrics")
-async def metrics():
-    return get_aggregate_stats()
+def metrics():
+    return get_metrics()
