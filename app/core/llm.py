@@ -9,6 +9,42 @@ from dotenv import load_dotenv
 
 from app.core.tools import TOOL_SCHEMAS, execute_tool, TOOL_MAP
 
+
+def normalize_messages(messages):
+    normalized = []
+    for m in messages:
+        if isinstance(m.get("content"), str):
+            normalized.append({
+                "role": m["role"],
+                "content": [{"type": "text", "text": m["content"]}]
+            })
+        else:
+            normalized.append(m)
+    return normalized
+
+
+def reinforce_last_user_message(messages):
+    if len(messages) < 2:
+        return messages
+
+    facts = []
+    for m in messages[:-1]:
+        if m["role"] == "user" and isinstance(m.get("content"), str):
+            facts.append(m["content"])
+
+    facts = facts[-2:]
+
+    last = messages[-1]
+    if last["role"] == "user" and isinstance(last.get("content"), str):
+        prefix = "Use this user context if relevant:\n" + "\n".join(facts) + "\n\n"
+        messages[-1] = {
+            "role": "user",
+            "content": prefix + last["content"]
+        }
+
+    return messages
+
+
 load_dotenv()
 
 PRIMARY_MODEL  = os.getenv("PRIMARY_MODEL")
@@ -22,29 +58,28 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-# ✅ TOOL VALIDATION
 def is_tool_result_valid(result: dict) -> bool:
     if not result:
         return False
-
     if "error" in result:
         return False
-
     if "min" in result and "max" in result:
         if result["min"] <= 0 or result["max"] <= 0:
             return False
-
     return True
 
 
-# ✅ SMART TOOL DECISION
 def should_enable_tools(user_message: str) -> bool:
     msg = user_message.lower()
 
     if any(k in msg for k in ["salary", "compensation", "pay", "ctc"]):
         return True
 
-    if any(k in msg for k in ["roadmap", "plan", "30 day", "60 day", "90 day"]):
+    if any(k in msg for k in [
+        "roadmap", "plan", "learning plan",
+        "30 day", "60 day", "90 day",
+        "step by step", "transition plan"
+    ]):
         return True
 
     if any(k in msg for k in ["fit", "evaluate", "rate me"]):
@@ -70,42 +105,63 @@ async def run_agentic_turn(
 
     use_tools = should_enable_tools(user_message)
 
+    force_roadmap = any(k in user_message.lower() for k in [
+        "roadmap", "plan", "30 day", "60 day", "90 day",
+        "step by step", "transition plan"
+    ])
+
     total_tool_ms = 0.0
     input_tokens = 0
     output_tokens = 0
 
     tool_call_count = 0
-
     total_start = time.perf_counter()
 
     for iteration in range(MAX_ITERATIONS):
 
         try:
-            response = await client.messages.create(
-                model=active_model,
-                max_tokens=700,
-                system=system,
-                messages=history,
-                tools=TOOL_SCHEMAS if use_tools else [],
-            )
+            request_kwargs = {
+                "model": active_model,
+                "max_tokens": 700,
+                "system": system,
+                # ✅ FIX: context reinforcement + normalization
+                "messages": normalize_messages(reinforce_last_user_message(history)),
+                "tools": TOOL_SCHEMAS if use_tools else [],
+            }
+
+            if force_roadmap:
+                request_kwargs["tool_choice"] = {
+                    "type": "tool",
+                    "name": "generate_career_roadmap"
+                }
+
+            response = await client.messages.create(**request_kwargs)
 
         except anthropic.APIStatusError:
             active_model = FALLBACK_MODEL
             yield _sse("info", {"message": f"Switched to fallback model: {active_model}"})
             await asyncio.sleep(0.01)
 
-            response = await client.messages.create(
-                model=active_model,
-                max_tokens=1024,
-                system=system,
-                messages=history,
-                tools=TOOL_SCHEMAS if use_tools else [],
-            )
+            request_kwargs = {
+                "model": active_model,
+                "max_tokens": 1024,
+                "system": system,
+                # ✅ SAME FIX HERE
+                "messages": normalize_messages(reinforce_last_user_message(history)),
+                "tools": TOOL_SCHEMAS if use_tools else [],
+            }
+
+            if force_roadmap:
+                request_kwargs["tool_choice"] = {
+                    "type": "tool",
+                    "name": "generate_career_roadmap"
+                }
+
+            response = await client.messages.create(**request_kwargs)
 
         input_tokens += response.usage.input_tokens
         output_tokens += response.usage.output_tokens
 
-        # ───────── TOOL USE ─────────
         if response.stop_reason == "tool_use":
 
             if not use_tools:
@@ -136,10 +192,6 @@ async def run_agentic_turn(
 
                 tool_call_count += 1
 
-                print(f"[AGENT] Calling tool: {tool_name}")
-                print(f"[AGENT] Input: {tool_input}")
-
-                # ✅ ADDED (ONLY CHANGE)
                 yield _sse("info", {
                     "message": f"Looking up {tool_name.replace('_', ' ')}..."
                 })
@@ -158,16 +210,11 @@ async def run_agentic_turn(
 
                 total_tool_ms += tool_ms
 
-                print(f"[AGENT] Tool result: {result}")
-
                 if not is_tool_result_valid(result):
-                    print("[AGENT] Invalid tool result → fallback")
-
                     yield _sse("info", {
                         "message": f"Tool {tool_name} failed, using reasoning"
                     })
                     await asyncio.sleep(0.01)
-
                     continue
 
                 yield _sse("tool_done", {
@@ -190,7 +237,6 @@ async def run_agentic_turn(
 
             continue
 
-        # ───────── FINAL RESPONSE ─────────
         if response.stop_reason == "end_turn":
 
             first_token = True
@@ -201,7 +247,7 @@ async def run_agentic_turn(
                     model=active_model,
                     max_tokens=1024,
                     system=system,
-                    messages=history,
+                    messages=normalize_messages(history),
                     tools=TOOL_SCHEMAS if use_tools else [],
                 ) as stream:
 
@@ -231,7 +277,7 @@ async def run_agentic_turn(
                     model=active_model,
                     max_tokens=1024,
                     system=system,
-                    messages=history,
+                    messages=normalize_messages(history),
                     tools=TOOL_SCHEMAS if use_tools else [],
                 ) as stream:
 
