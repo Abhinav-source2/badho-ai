@@ -24,7 +24,10 @@ cross_encoder = CrossEncoder(RERANK_MODEL)
 
 
 def _get_collection():
-    return chroma_client.get_collection(name=COLLECTION)
+    try:
+        return chroma_client.get_collection(name=COLLECTION)
+    except Exception:
+        return chroma_client.create_collection(name=COLLECTION)
 
 
 # ─────────────────────────────────────────────
