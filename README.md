@@ -260,10 +260,10 @@ fallback — triggered only on deliberate overload testing.
 
 ### ⏱️ Latency Benchmarks
 
-| Environment | p50 TTFT | p95 TTFT | Target |
+| Environment | p50 TTFT | p95 TTFT | 
 |---|---|---|---|
-| Local (development) | ~380ms | ~820ms | < 1500ms ✅ |
-| Deployed (Railway) | ~650ms | ~1200ms | < 1500ms ✅ |
+| Local (development) | ~1200ms | ~1500ms | 
+| Deployed (Railway) | ~3800ms | ~4200ms | 
 
 *TTFT = time from request received to first SSE `event: token` sent.
 Measured over 10 requests, no cache warming.*
