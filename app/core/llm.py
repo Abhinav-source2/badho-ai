@@ -169,7 +169,8 @@ async def run_agentic_turn(
 
             # 🔥 FIX: prevent repeated tool loop
             if tool_cycle_done:
-                break
+                use_tools = False
+                continue
 
             tool_cycle_done = True
 
