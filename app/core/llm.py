@@ -248,7 +248,7 @@ async def run_agentic_turn(
 
             continue
 
-        if response.stop_reason == "end_turn":
+        if response.stop_reason in ["end_turn", "stop", "max_tokens"]:
 
             first_token = True
             ttft_ms = 0.0
