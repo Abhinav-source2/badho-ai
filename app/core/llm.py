@@ -118,6 +118,8 @@ async def run_agentic_turn(
     tool_call_count = 0
     total_start = time.perf_counter()
 
+    tool_cycle_done = False  # 🔥 FIX
+
     for iteration in range(MAX_ITERATIONS):
 
         try:
@@ -125,7 +127,6 @@ async def run_agentic_turn(
                 "model": active_model,
                 "max_tokens": 700,
                 "system": system,
-                # ✅ FIX: context reinforcement + normalization
                 "messages": normalize_messages(reinforce_last_user_message(history)),
                 "tools": TOOL_SCHEMAS if use_tools else [],
             }
@@ -147,7 +148,6 @@ async def run_agentic_turn(
                 "model": active_model,
                 "max_tokens": 1024,
                 "system": system,
-                # ✅ SAME FIX HERE
                 "messages": normalize_messages(reinforce_last_user_message(history)),
                 "tools": TOOL_SCHEMAS if use_tools else [],
             }
@@ -164,6 +164,12 @@ async def run_agentic_turn(
         output_tokens += response.usage.output_tokens
 
         if response.stop_reason == "tool_use":
+
+            # 🔥 FIX: prevent repeated tool loop
+            if tool_cycle_done:
+                break
+
+            tool_cycle_done = True
 
             if not use_tools:
                 break
@@ -243,59 +249,35 @@ async def run_agentic_turn(
             first_token = True
             ttft_ms = 0.0
 
-            try:
-                async with client.messages.stream(
-                    model=active_model,
-                    max_tokens=1024,
-                    system=system,
-                    messages=normalize_messages(history),
-                    tools=TOOL_SCHEMAS if use_tools else [],
-                ) as stream:
+            async with client.messages.stream(
+                model=active_model,
+                max_tokens=1024,
+                system=system,
+                messages=normalize_messages(history),
+                tools=TOOL_SCHEMAS if use_tools else [],
+            ) as stream:
 
-                    async for text in stream.text_stream:
+                async for text in stream.text_stream:
 
-                        if first_token and "Thinking..." in text:
-                            continue
+                    if first_token and "Thinking..." in text:
+                        continue
 
-                        if first_token:
-                            ttft_ms = (time.perf_counter() - total_start) * 1000
-                            first_token = False
+                    if first_token:
+                        ttft_ms = (time.perf_counter() - total_start) * 1000
+                        first_token = False
 
-                        yield _sse("token", {"text": text})
-                        await asyncio.sleep(0.01)
+                    yield _sse("token", {"text": text})
+                    await asyncio.sleep(0.01)
 
-                    final = await stream.get_final_message()
-                    input_tokens += final.usage.input_tokens
-                    output_tokens += final.usage.output_tokens
-
-            except anthropic.APIStatusError:
-                active_model = FALLBACK_MODEL
-
-                yield _sse("info", {"message": f"Fallback stream: {active_model}"})
-                await asyncio.sleep(0.01)
-
-                async with client.messages.stream(
-                    model=active_model,
-                    max_tokens=1024,
-                    system=system,
-                    messages=normalize_messages(history),
-                    tools=TOOL_SCHEMAS if use_tools else [],
-                ) as stream:
-
-                    async for text in stream.text_stream:
-                        yield _sse("token", {"text": text})
-                        await asyncio.sleep(0.01)
-
-                    final = await stream.get_final_message()
-                    input_tokens += final.usage.input_tokens
-                    output_tokens += final.usage.output_tokens
+                final = await stream.get_final_message()
+                input_tokens += final.usage.input_tokens
+                output_tokens += final.usage.output_tokens
 
             cost = (
                 input_tokens * 0.80 / 1_000_000 +
                 output_tokens * 4.00 / 1_000_000
             )
             record_metrics(ttft_ms, cost)
-
 
             yield _sse("__meta__", {
                 "input_tokens": input_tokens,
