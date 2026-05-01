@@ -100,7 +100,8 @@ async def run_agentic_turn(
     user_message: str,
     model: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    
+
+    # 🔥 Early streaming (TTFT fix)
     yield _sse("token", {"text": "Analyzing your request...\n"})
 
     client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -126,50 +127,56 @@ async def run_agentic_turn(
 
     for iteration in range(MAX_ITERATIONS):
 
+        # 🟢 Limit history size (important optimization)
+        history = history[-6:]
+
+        # 🟢 Prepare messages once
+        prepared_messages = normalize_messages(
+            reinforce_last_user_message(history)
+        )
+
         try:
             request_kwargs = {
                 "model": active_model,
                 "max_tokens": 900,
                 "system": system,
-                "messages": normalize_messages(reinforce_last_user_message(history)),
+                "messages": prepared_messages,
                 "tools": TOOL_SCHEMAS if use_tools else [],
             }
 
-            # ✅ FIX: correct tool_choice format
             if force_roadmap and not tool_cycle_done:
-                request_kwargs["tool_choice"] = {
-                    "type": "auto"
-                }
+                request_kwargs["tool_choice"] = {"type": "auto"}
 
             response = await client.messages.create(**request_kwargs)
 
         except anthropic.APIStatusError:
             active_model = FALLBACK_MODEL
-            yield _sse("info", {"message": f"Switched to fallback model: {active_model}"})
+
+            yield _sse("info", {
+                "message": f"Switched to fallback model: {active_model}"
+            })
+
             await asyncio.sleep(0.01)
 
             request_kwargs = {
                 "model": active_model,
                 "max_tokens": 1024,
                 "system": system,
-                "messages": normalize_messages(reinforce_last_user_message(history)),
+                "messages": prepared_messages,
                 "tools": TOOL_SCHEMAS if use_tools else [],
             }
 
-            # ✅ FIX here too
             if force_roadmap and not tool_cycle_done:
-                request_kwargs["tool_choice"] = {
-                    "type": "auto"
-                }
+                request_kwargs["tool_choice"] = {"type": "auto"}
 
             response = await client.messages.create(**request_kwargs)
 
         input_tokens += response.usage.input_tokens
         output_tokens += response.usage.output_tokens
 
+        # ---------------- TOOL HANDLING ----------------
         if response.stop_reason == "tool_use":
 
-            # ✅ FIX: prevent loop
             if tool_cycle_done:
                 use_tools = False
                 continue
@@ -213,6 +220,7 @@ async def run_agentic_turn(
                     "tool_name": tool_name,
                     "tool_input": tool_input,
                 })
+
                 await asyncio.sleep(0.01)
 
                 try:
@@ -227,13 +235,13 @@ async def run_agentic_turn(
                     yield _sse("info", {
                         "message": f"Tool {tool_name} failed, using reasoning"
                     })
-                    await asyncio.sleep(0.01)
                     continue
 
                 yield _sse("tool_done", {
                     "tool_name": tool_name,
                     "latency_ms": tool_ms,
                 })
+
                 await asyncio.sleep(0.01)
 
                 tool_results.append({
@@ -242,14 +250,18 @@ async def run_agentic_turn(
                     "content": json.dumps(result),
                 })
 
-            if tool_results and len(tool_results) > 0:
+            if tool_results:
                 history.append({
                     "role": "user",
                     "content": tool_results
                 })
 
+            # 🟢 Prevent further tool loops
+            use_tools = False
+
             continue
 
+        # ---------------- FINAL RESPONSE ----------------
         if response.stop_reason in ["end_turn", "stop", "max_tokens"]:
 
             first_token = True
@@ -259,9 +271,7 @@ async def run_agentic_turn(
                 model=active_model,
                 max_tokens=1500,
                 system=system,
-                messages=normalize_messages(history),
-
-                # ✅ CRITICAL FIX: disable tools here
+                messages=prepared_messages,
                 tools=[]
             ) as stream:
 
@@ -278,6 +288,7 @@ async def run_agentic_turn(
                     await asyncio.sleep(0.01)
 
                 final = await stream.get_final_message()
+
                 input_tokens += final.usage.input_tokens
                 output_tokens += final.usage.output_tokens
 
@@ -285,6 +296,7 @@ async def run_agentic_turn(
                 input_tokens * 0.80 / 1_000_000 +
                 output_tokens * 4.00 / 1_000_000
             )
+
             record_metrics(ttft_ms, cost)
 
             yield _sse("__meta__", {
