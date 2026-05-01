@@ -131,11 +131,11 @@ async def run_agentic_turn(
                 "tools": TOOL_SCHEMAS if use_tools else [],
             }
 
-            if force_roadmap:
+            if force_roadmap and not tool_cycle_done:
                 request_kwargs["tool_choice"] = {
                     "type": "tool",
                     "name": "generate_career_roadmap"
-                }
+                }   
 
             response = await client.messages.create(**request_kwargs)
 
@@ -152,10 +152,10 @@ async def run_agentic_turn(
                 "tools": TOOL_SCHEMAS if use_tools else [],
             }
 
-            if force_roadmap:
+            if force_roadmap and not tool_cycle_done:
                 request_kwargs["tool_choice"] = {
-                    "type": "tool",
-                    "name": "generate_career_roadmap"
+                "type": "tool",
+                "name": "generate_career_roadmap"
                 }
 
             response = await client.messages.create(**request_kwargs)
