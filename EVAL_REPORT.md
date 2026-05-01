@@ -35,11 +35,10 @@ The evaluation suite includes a mix of deterministic and LLM-judged tests:
 
 ## ⚙️ System Performance
 
-- **p50 TTFT:** ~400 ms  
-- **p95 TTFT:** ~900 ms  
+- **p50 TTFT:** ~3300 ms  
+- **p95 TTFT:** ~3800 ms  
 - **Avg Cost per Query:** ~$0.002  
-
-✔ Meets requirement: TTFT < 1.5s  
+ 
 
 ---
 
