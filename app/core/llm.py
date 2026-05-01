@@ -14,6 +14,8 @@ from app.core.metrics import record_metrics
 def normalize_messages(messages):
     normalized = []
     for m in messages:
+        if not m.get("content"):
+            continue
         if isinstance(m.get("content"), str):
             normalized.append({
                 "role": m["role"],
@@ -178,10 +180,11 @@ async def run_agentic_turn(
                 yield _sse("error", {"message": "Tool call limit reached"})
                 break
 
-            history.append({
-                "role": "assistant",
-                "content": response.content
-            })
+            if response.content:
+                history.append({
+                    "role": "assistant",
+                    "content": response.content
+                })
 
             tool_results = []
 
@@ -236,7 +239,7 @@ async def run_agentic_turn(
                     "content": json.dumps(result),
                 })
 
-            if tool_results:
+            if tool_results and len(tool_results) > 0:
                 history.append({
                     "role": "user",
                     "content": tool_results
