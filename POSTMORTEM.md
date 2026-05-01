@@ -1,7 +1,5 @@
 # 🧠 POSTMORTEM.md — Badho AI Agentic Career Coach
 
-> *One engineer. Three days. Direct SDK calls. $2.70.*
-
 ---
 
 ## What I Cut — and Why
@@ -87,11 +85,3 @@ This would have made the agentic loop cleaner and the tests more targeted.
 
 ---
 
-## One Line
-
-> I built a deterministic agentic system by moving control from prompts into
-> code — validated by a custom eval framework, shipped in 3 days for $2.70.
-
----
-
-*Abhinav Jajoo — Nudgit / Badho AI Take-Home*
