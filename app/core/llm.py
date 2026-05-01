@@ -120,7 +120,7 @@ async def run_agentic_turn(
     tool_call_count = 0
     total_start = time.perf_counter()
 
-    tool_cycle_done = False  # 🔥 FIX
+    tool_cycle_done = False
 
     for iteration in range(MAX_ITERATIONS):
 
@@ -133,11 +133,11 @@ async def run_agentic_turn(
                 "tools": TOOL_SCHEMAS if use_tools else [],
             }
 
+            # ✅ FIX: correct tool_choice format
             if force_roadmap and not tool_cycle_done:
                 request_kwargs["tool_choice"] = {
-                    "type": "tool",
-                    "name": "generate_career_roadmap"
-                }   
+                    "type": "auto"
+                }
 
             response = await client.messages.create(**request_kwargs)
 
@@ -154,10 +154,10 @@ async def run_agentic_turn(
                 "tools": TOOL_SCHEMAS if use_tools else [],
             }
 
+            # ✅ FIX here too
             if force_roadmap and not tool_cycle_done:
                 request_kwargs["tool_choice"] = {
-                "type": "tool",
-                "name": "generate_career_roadmap"
+                    "type": "auto"
                 }
 
             response = await client.messages.create(**request_kwargs)
@@ -167,7 +167,7 @@ async def run_agentic_turn(
 
         if response.stop_reason == "tool_use":
 
-            # 🔥 FIX: prevent repeated tool loop
+            # ✅ FIX: prevent loop
             if tool_cycle_done:
                 use_tools = False
                 continue
@@ -258,7 +258,9 @@ async def run_agentic_turn(
                 max_tokens=1024,
                 system=system,
                 messages=normalize_messages(history),
-                tools=TOOL_SCHEMAS if use_tools else [],
+
+                # ✅ CRITICAL FIX: disable tools here
+                tools=[]
             ) as stream:
 
                 async for text in stream.text_stream:
