@@ -125,10 +125,9 @@ async def run_agentic_turn(
 
     tool_cycle_done = False
 
-    for iteration in range(MAX_ITERATIONS):
+    history = history[-6:]
 
-        # 🟢 Limit history size (important optimization)
-        history = history[-6:]
+    for iteration in range(MAX_ITERATIONS):
 
         # 🟢 Prepare messages once
         prepared_messages = normalize_messages(
@@ -271,7 +270,7 @@ async def run_agentic_turn(
                 model=active_model,
                 max_tokens=1500,
                 system=system,
-                messages=prepared_messages,
+                messages=normalize_messages(history),
                 tools=[]
             ) as stream:
 
