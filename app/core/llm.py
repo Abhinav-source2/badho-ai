@@ -127,7 +127,7 @@ async def run_agentic_turn(
         try:
             request_kwargs = {
                 "model": active_model,
-                "max_tokens": 700,
+                "max_tokens": 900,
                 "system": system,
                 "messages": normalize_messages(reinforce_last_user_message(history)),
                 "tools": TOOL_SCHEMAS if use_tools else [],
@@ -255,7 +255,7 @@ async def run_agentic_turn(
 
             async with client.messages.stream(
                 model=active_model,
-                max_tokens=1024,
+                max_tokens=1500,
                 system=system,
                 messages=normalize_messages(history),
 
