@@ -100,6 +100,8 @@ async def run_agentic_turn(
     user_message: str,
     model: str | None = None,
 ) -> AsyncGenerator[str, None]:
+    
+    yield _sse("token", {"text": "Analyzing your request...\n"})
 
     client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
